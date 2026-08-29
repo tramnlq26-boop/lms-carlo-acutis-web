@@ -2769,8 +2769,8 @@ function AdminMembersPage({ users, classes, secretBoxes, setSecretBoxes, onAddUs
                     {Array.from(new Set(
                       classes
                         .filter(cls =>
-                          (users.find(u => u.id === secretUserId)?.lop || []).includes(cls.name) ||
-                          (cls.leaders || []).some(leader => leader.userId === secretUserId)
+                          (users.find(u => String(u.id) === String(secretUserId))?.lop || []).includes(cls.name) ||
+                          (cls.leaders || []).some(leader => String(leader.userId) === String(secretUserId))
                         )
                         .map(cls => cls.name)
                     )).map(lop => {
@@ -2824,8 +2824,8 @@ function AdminMembersPage({ users, classes, secretBoxes, setSecretBoxes, onAddUs
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
                   <div className="font-bold text-amber-900 mb-2">Lớp của người này:</div>
                   <div className="flex flex-wrap gap-1.5">
-                    {(users.find(u => u.id === secretUserId)?.lop || []).length > 0 ? (
-                      (users.find(u => u.id === secretUserId)?.lop || []).map((lop, idx) => (
+                    {(users.find(u => String(u.id) === String(secretUserId))?.lop || []).length > 0 ? (
+                      (users.find(u => String(u.id) === String(secretUserId))?.lop || []).map((lop, idx) => (
                         <span key={idx} className="bg-white border border-amber-300 text-amber-900 px-2 py-1 rounded-lg font-bold">
                           {lop}
                         </span>
@@ -2850,6 +2850,8 @@ function AdminMembersPage({ users, classes, secretBoxes, setSecretBoxes, onAddUs
                 setSecretUserId("");
                 setSecretOpenDate("");
                 setSecretClassName("");
+                 setSecretClassNames([]);
+                 setSecretLeaderType("Huynh Trưởng");
               }}
                   className="px-4 py-2 bg-slate-200 text-slate-700 font-bold rounded-lg"
                 >
