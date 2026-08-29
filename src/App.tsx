@@ -375,7 +375,7 @@ export default function App() {
   });
 
   const saveCloudState = async (nextState) => {
-    if (!cloudReadyRef.current || applyingCloudRef.current) return;
+    if (!supabase || !cloudReadyRef.current || applyingCloudRef.current) return;
     const payload = {
       id: 'main',
       users: nextState.users,
@@ -394,6 +394,12 @@ export default function App() {
     let cancelled = false;
 
     const loadCloudState = async () => {
+      if (!supabase) {
+        console.warn('Supabase chưa được cấu hình. App sẽ dùng dữ liệu cục bộ cho đến khi thêm VITE_SUPABASE_URL và VITE_SUPABASE_PUBLISHABLE_KEY.');
+        cloudReadyRef.current = false;
+        return;
+      }
+
       const { data, error } = await supabase
         .from('lms_app_state')
         .select('id, users, classes, secret_boxes, logo_url')
@@ -429,6 +435,8 @@ export default function App() {
     loadCloudState();
 
     // Realtime: khi Admin sửa trên MacBook, thiết bị khác đang mở app sẽ nhận dữ liệu mới.
+    if (!supabase) return () => { cancelled = true; };
+
     const channel = supabase
       .channel('lms-app-state-sync')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'lms_app_state', filter: 'id=eq.main' }, (payload) => {
