@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './lib/supabaseClient';
 import { 
   Users, UserCheck, Calendar, ShieldCheck, Search, Plus, 
@@ -315,68 +315,162 @@ const normalizeClasses = (rawClasses, rawUsers) => {
 };
 
 export default function App() {
-  // LocalStorage đồng bộ dữ liệu
-  const [users, setUsers] = useState(() => {
-    const saved = localStorage.getItem("lms_acutis_users_v11");
-    return saved ? JSON.parse(saved) : INITIAL_USERS;
-  });
+  // =============================
+  // ĐỒNG BỘ DỮ LIỆU QUA SUPABASE
+  // =============================
+  // localStorage chỉ được dùng làm dữ liệu tạm/di trú lần đầu.
+  // Supabase là nguồn dữ liệu chính để MacBook, điện thoại và các thiết bị khác dùng chung.
+  const getLocalJson = (key, fallback) => {
+    try {
+      const saved = localStorage.getItem(key);
+      return saved ? JSON.parse(saved) : fallback;
+    } catch {
+      return fallback;
+    }
+  };
 
-  const [logoUrl, setLogoUrl] = useState(() => {
-    return localStorage.getItem("lms_acutis_logo_v11") || DEFAULT_LOGO;
-  });
+  const [users, setUsers] = useState(() =>
+    getLocalJson("lms_acutis_users_v11", INITIAL_USERS)
+  );
+
+  const [logoUrl, setLogoUrl] = useState(() =>
+    localStorage.getItem("lms_acutis_logo_v11") || DEFAULT_LOGO
+  );
 
   const [currentUser, setCurrentUser] = useState(() => {
-    const savedSession = localStorage.getItem("lms_acutis_session_v11");
-    // Nếu chỉ khôi phục phiên cũ khi tải lại trang thì không coi đó là lần đăng nhập mới.
-    if (savedSession) {
-      sessionStorage.setItem("lms_acutis_secret_seen_v1", "1");
-      return JSON.parse(savedSession);
-    }
+    try {
+      const savedSession = localStorage.getItem("lms_acutis_session_v11");
+      if (savedSession) {
+        sessionStorage.setItem("lms_acutis_secret_seen_v1", "1");
+        return JSON.parse(savedSession);
+      }
+    } catch {}
     return null;
   });
 
   const [classes, setClasses] = useState(() => {
-    const saved = localStorage.getItem("lms_acutis_classes_v11");
-    const savedUsers = localStorage.getItem("lms_acutis_users_v11");
-    const parsedClasses = saved ? JSON.parse(saved) : INITIAL_CLASSES;
-    const parsedUsers = savedUsers ? JSON.parse(savedUsers) : INITIAL_USERS;
+    const parsedClasses = getLocalJson("lms_acutis_classes_v11", INITIAL_CLASSES);
+    const parsedUsers = getLocalJson("lms_acutis_users_v11", INITIAL_USERS);
     return normalizeClasses(parsedClasses, parsedUsers);
   });
 
-  const [secretBoxes, setSecretBoxes] = useState(() => {
-    const saved = localStorage.getItem("lms_acutis_secret_boxes_v1");
-    return saved ? JSON.parse(saved) : INITIAL_SECRET_BOXES;
-  });
+  const [secretBoxes, setSecretBoxes] = useState(() =>
+    getLocalJson("lms_acutis_secret_boxes_v1", INITIAL_SECRET_BOXES)
+  );
 
-  const [activePage, setActivePage] = useState("home"); // 'home', 'profile', 'classManagement', 'members', 'lms'
-  
-  // State đăng nhập
+  const [activePage, setActivePage] = useState("home");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPass, setLoginPass] = useState("");
   const [loginError, setLoginError] = useState("");
 
+  const cloudReadyRef = useRef(false);
+  const applyingCloudRef = useRef(false);
+  const saveTimerRef = useRef(null);
+
+  const buildCloudState = (nextUsers = users, nextClasses = classes, nextSecretBoxes = secretBoxes, nextLogoUrl = logoUrl) => ({
+    users: nextUsers,
+    classes: nextClasses,
+    secretBoxes: nextSecretBoxes,
+    logoUrl: nextLogoUrl,
+  });
+
+  const saveCloudState = async (nextState) => {
+    if (!cloudReadyRef.current || applyingCloudRef.current) return;
+    const payload = {
+      id: 'main',
+      users: nextState.users,
+      classes: nextState.classes,
+      secret_boxes: nextState.secretBoxes,
+      logo_url: nextState.logoUrl,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from('lms_app_state').upsert(payload, { onConflict: 'id' });
+    if (error) console.error('Không thể lưu dữ liệu lên Supabase:', error);
+  };
+
+  // Tải dữ liệu chung từ Supabase. Nếu bảng chưa có dữ liệu, tự động đưa dữ liệu
+  // đang có trên máy Admin (localStorage) lên Supabase để không mất dữ liệu hiện tại.
   useEffect(() => {
-    localStorage.setItem("lms_acutis_users_v11", JSON.stringify(users));
-  }, [users]);
+    let cancelled = false;
+
+    const loadCloudState = async () => {
+      const { data, error } = await supabase
+        .from('lms_app_state')
+        .select('id, users, classes, secret_boxes, logo_url')
+        .eq('id', 'main')
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error) {
+        console.error('Không thể tải dữ liệu Supabase:', error);
+        // Cho phép app tiếp tục chạy bằng dữ liệu local nếu Supabase chưa cấu hình xong.
+        cloudReadyRef.current = false;
+        return;
+      }
+
+      if (data) {
+        applyingCloudRef.current = true;
+        if (Array.isArray(data.users)) setUsers(data.users);
+        if (Array.isArray(data.classes)) setClasses(normalizeClasses(data.classes, data.users || INITIAL_USERS));
+        if (Array.isArray(data.secret_boxes)) setSecretBoxes(data.secret_boxes);
+        if (data.logo_url) setLogoUrl(data.logo_url);
+        setTimeout(() => { applyingCloudRef.current = false; }, 0);
+      } else {
+        // Cloud trống: lấy dữ liệu hiện có của máy đang mở app làm dữ liệu gốc.
+        // Bật cờ trước khi ghi vì saveCloudState có kiểm tra cờ này.
+        cloudReadyRef.current = true;
+        await saveCloudState(buildCloudState());
+      }
+
+      cloudReadyRef.current = true;
+    };
+
+    loadCloudState();
+
+    // Realtime: khi Admin sửa trên MacBook, thiết bị khác đang mở app sẽ nhận dữ liệu mới.
+    const channel = supabase
+      .channel('lms-app-state-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lms_app_state', filter: 'id=eq.main' }, (payload) => {
+        const row = payload.new;
+        if (!row || row.id !== 'main') return;
+        applyingCloudRef.current = true;
+        if (Array.isArray(row.users)) setUsers(row.users);
+        if (Array.isArray(row.classes)) setClasses(normalizeClasses(row.classes, row.users || INITIAL_USERS));
+        if (Array.isArray(row.secret_boxes)) setSecretBoxes(row.secret_boxes);
+        if (row.logo_url) setLogoUrl(row.logo_url);
+        setTimeout(() => { applyingCloudRef.current = false; }, 0);
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') console.log('Supabase Realtime: đã kết nối đồng bộ.');
+      });
+
+    return () => {
+      cancelled = true;
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // Ghi local cache để app vẫn mở được khi mạng chập chờn, nhưng dữ liệu chung nằm ở Supabase.
+  useEffect(() => { localStorage.setItem("lms_acutis_users_v11", JSON.stringify(users)); }, [users]);
+  useEffect(() => { localStorage.setItem("lms_acutis_logo_v11", logoUrl); }, [logoUrl]);
+  useEffect(() => { localStorage.setItem("lms_acutis_classes_v11", JSON.stringify(classes)); }, [classes]);
+  useEffect(() => { localStorage.setItem("lms_acutis_secret_boxes_v1", JSON.stringify(secretBoxes)); }, [secretBoxes]);
+
+  // Mọi thay đổi dữ liệu chính đều được đẩy lên Supabase, có debounce để tránh ghi quá nhiều lần.
+  useEffect(() => {
+    if (!cloudReadyRef.current || applyingCloudRef.current) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveCloudState(buildCloudState()).catch(err => console.error(err));
+    }, 250);
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+  }, [users, classes, secretBoxes, logoUrl]);
 
   useEffect(() => {
-    localStorage.setItem("lms_acutis_logo_v11", logoUrl);
-  }, [logoUrl]);
-
-  useEffect(() => {
-    localStorage.setItem("lms_acutis_classes_v11", JSON.stringify(classes));
-  }, [classes]);
-
-  useEffect(() => {
-    localStorage.setItem("lms_acutis_secret_boxes_v1", JSON.stringify(secretBoxes));
-  }, [secretBoxes]);
-
-  useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem("lms_acutis_session_v11", JSON.stringify(currentUser));
-    } else {
-      localStorage.removeItem("lms_acutis_session_v11");
-    }
+    if (currentUser) localStorage.setItem("lms_acutis_session_v11", JSON.stringify(currentUser));
+    else localStorage.removeItem("lms_acutis_session_v11");
   }, [currentUser]);
 
   // Xử lý Đăng Nhập
