@@ -2766,21 +2766,14 @@ function AdminMembersPage({ users, classes, secretBoxes, setSecretBoxes, onAddUs
                   </div>
 
                   <div className="border border-slate-200 rounded-xl p-3 bg-slate-50 space-y-2 max-h-52 overflow-y-auto">
-                    {(() => {
-                      const selectedUser = users.find(u => String(u.id) === String(secretUserId));
-
-                      // Lấy lớp từ cả hồ sơ người phụ trách VÀ liên kết leaders của lớp.
-                      // Như vậy checkbox vẫn hiện ngay cả khi dữ liệu cũ chưa đồng bộ 2 chiều.
-                      const selectableClassNames = Array.from(new Set([
-                        ...(Array.isArray(selectedUser?.lop) ? selectedUser.lop : []),
-                        ...classes
-                          .filter(cls =>
-                            (cls.leaders || []).some(leader => String(leader.userId) === String(secretUserId))
-                          )
-                          .map(cls => cls.name)
-                      ].filter(Boolean)));
-
-                      return selectableClassNames.length > 0 ? selectableClassNames.map(lop => {
+                    {Array.from(new Set(
+                      classes
+                        .filter(cls =>
+                          (users.find(u => String(u.id) === String(secretUserId))?.lop || []).includes(cls.name) ||
+                          (cls.leaders || []).some(leader => String(leader.userId) === String(secretUserId))
+                        )
+                        .map(cls => cls.name)
+                    )).map(lop => {
                       const checked = secretClassNames.includes(lop);
                       return (
                         <label
@@ -2808,12 +2801,7 @@ function AdminMembersPage({ users, classes, secretBoxes, setSecretBoxes, onAddUs
                           <span className="text-xs font-bold text-slate-800">{lop}</span>
                         </label>
                       );
-                      }) : (
-                        <div className="p-3 rounded-lg border border-dashed border-amber-300 bg-amber-50 text-[11px] text-amber-700 text-center">
-                          Người này hiện chưa có lớp nào để chọn.
-                        </div>
-                      );
-                    })()}
+                    })}
                   </div>
 
                   <p className="text-[10px] text-slate-500 mt-1">
